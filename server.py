@@ -408,8 +408,8 @@ def _mask_math_text(text):
 
     def mask_token(token):
         pid = uuid.uuid4().hex[:16]
-        pstr = f"__MATHPROT_{pid}__"
-        placeholders[pstr] = token
+        pstr = f"MATHPROTSTART{pid}MATHPROTEND"
+        placeholders[pid] = token
         return pstr
 
     def mask_block(m):
@@ -435,16 +435,24 @@ def _mask_math_text(text):
     return masked, placeholders
 
 
+_RESTORE_RE = re.compile(
+    r"MATHPROTSTART\s*([0-9a-fA-F]{16})\s*MATHPROTEND", re.IGNORECASE
+)
+
+
 def _restore_math_text(text, placeholders):
     """
-    Restore mathematical expressions from UUID-style placeholders.
-    
-    This is robust against Tahrirchi's whitespace/underscore manipulation because
-    UUID format is impossible to accidentally damage.
+    Restore mathematical expressions from placeholders.
+
+    Tahrirchi sometimes alters case or inserts whitespace around the
+    placeholder, so matching is done with a tolerant regex rather than
+    an exact string replace.
     """
-    for placeholder_str, original in placeholders.items():
-        text = text.replace(placeholder_str, original)
-    return text
+
+    def repl(m):
+        return placeholders.get(m.group(1).lower(), m.group(0))
+
+    return _RESTORE_RE.sub(repl, text)
 
 _LATEX_FRAC_RE = re.compile(r"\\frac\{([^}]+)\}\{([^}]+)\}")
 
