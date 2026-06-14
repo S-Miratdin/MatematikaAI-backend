@@ -19,6 +19,16 @@ function esc(s) {
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
 
+// ── API base (separate backend host on GitHub Pages) ──────────
+const API_BASE = location.hostname.endsWith('github.io')
+  ? 'https://matematikaai-backend.onrender.com'
+  : '';
+
+function apiFetch(path, opts = {}) {
+  const url = path.startsWith('/api') ? API_BASE + path : path;
+  return fetch(url, { credentials: 'include', ...opts });
+}
+
 // ── State ────────────────────────────────────────────────────
 let config  = { api_key: '', model: 'tilmoch' };
 let history = [];
@@ -54,17 +64,49 @@ function showLimitModal(key) {
 // ════════════════════════════════════════════════════════════
 //  TAB SWITCHING
 // ════════════════════════════════════════════════════════════
-document.querySelectorAll('.tab-btn').forEach(btn => {
-  btn.addEventListener('click', () => {
-    const tab = btn.dataset.tab;
-    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-    document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
-    btn.classList.add('active');
-    $('panel-' + tab).classList.add('active');
-    if (tab === 'admin' && currentUser?.role === 'admin') loadAdminPanel();
-    if (tab === 'tasks') loadTasksTab();
-  });
+function selectTab(tab) {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  const btn = document.querySelector(`.tab-btn[data-tab="${tab}"]`);
+  if (btn) btn.classList.add('active');
+  $('panel-' + tab).classList.add('active');
+  document.querySelector('.app-shell').classList.remove('home-mode');
+  localStorage.setItem('lastTab', tab);
+  if (tab === 'admin' && currentUser?.role === 'admin') loadAdminPanel();
+  if (tab === 'tasks') loadTasksTab();
+}
+
+document.querySelectorAll('.tab-btn[data-tab]').forEach(btn => {
+  btn.addEventListener('click', () => selectTab(btn.dataset.tab));
 });
+
+function goHome() {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  $('panel-home').classList.add('active');
+  document.querySelector('.app-shell').classList.add('home-mode');
+}
+
+document.querySelectorAll('.home-card').forEach(card => {
+  card.addEventListener('click', () => selectTab(card.dataset.tab));
+});
+
+function initHomeOrLastTab() {
+  const lastTab   = localStorage.getItem('lastTab');
+  const validTabs = ['solver', 'calc', 'kb', 'tasks', 'admin'];
+  const tabValid  = lastTab
+    && validTabs.includes(lastTab)
+    && (lastTab !== 'admin' || currentUser?.role === 'admin');
+
+  if (tabValid) {
+    selectTab(lastTab);
+  } else {
+    document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+    $('panel-home').classList.add('active');
+    document.querySelector('.app-shell').classList.add('home-mode');
+  }
+  document.documentElement.classList.remove('home-pending');
+}
 
 
 // ════════════════════════════════════════════════════════════
@@ -92,6 +134,7 @@ function initTheme() {
 document.addEventListener('DOMContentLoaded', async () => {
   initTheme();
   await loadAuth();
+  initHomeOrLastTab();
   await loadConfig();
   await loadHistory();
   kbInit();
@@ -102,7 +145,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 // ════════════════════════════════════════════════════════════
 async function loadConfig() {
   try {
-    const r = await fetch('/api/config');
+    const r = await apiFetch('/api/config');
     config = await r.json();
   } catch (_) {}
 }
@@ -113,7 +156,7 @@ async function loadConfig() {
 
 async function loadAuth() {
   try {
-    const r    = await fetch('/api/auth/me');
+    const r    = await apiFetch('/api/auth/me');
     const data = await r.json();
     currentUser = data.authenticated ? { username: data.username, role: data.role } : null;
   } catch (_) {
@@ -168,7 +211,7 @@ async function authLogin(e) {
   const password = $('loginPassword').value;
   if (btn) btn.disabled = true;
   try {
-    const r = await fetch('/api/auth/login', {
+    const r = await apiFetch('/api/auth/login', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
       body:    JSON.stringify({ username, password }),
@@ -197,7 +240,7 @@ async function authRegister(e) {
   const phone      = $('regPhone').value.trim();
   if (btn) btn.disabled = true;
   try {
-    const r = await fetch('/api/auth/register', {
+    const r = await apiFetch('/api/auth/register', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
       body:    JSON.stringify({ username, email, password, first_name, last_name, phone }),
@@ -218,7 +261,7 @@ async function authRegister(e) {
 }
 
 async function authLogout() {
-  await fetch('/api/auth/logout', { method: 'POST' });
+  await apiFetch('/api/auth/logout', { method: 'POST' });
   currentUser = null;
   updateAuthUI();
   await loadHistory();
@@ -246,7 +289,7 @@ async function submitSuggestion(e) {
   const content = $('suggestContent').value.trim();
   if (btn) btn.disabled = true;
   try {
-    const r = await fetch('/api/kb/suggest', {
+    const r = await apiFetch('/api/kb/suggest', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
       body:    JSON.stringify({ title, content }),
@@ -290,7 +333,7 @@ function _getNerCache(problem) {
 
 async function loadHistory() {
   try {
-    const r  = await fetch('/api/history');
+    const r  = await apiFetch('/api/history');
     const raw = await r.json();
     // Восстанавливаем entities из localStorage-кеша
     history = raw.map(h => {
@@ -321,7 +364,7 @@ function renderHistoryList() {
 }
 
 async function deleteHistoryItem(origIdx, hid) {
-  await fetch(`/api/history/${hid}`, { method: 'DELETE' });
+  await apiFetch(`/api/history/${hid}`, { method: 'DELETE' });
   history.splice(origIdx, 1);
   renderHistoryList();
 }
@@ -344,7 +387,7 @@ function loadHistoryItem(i) {
 async function clearHistory() {
   if (!confirm('Barcha tarixni o\'chirasizmi?')) return;
   try {
-    await fetch('/api/history', { method: 'DELETE' });
+    await apiFetch('/api/history', { method: 'DELETE' });
     history = [];
     renderHistoryList();
   } catch (e) {
@@ -442,7 +485,7 @@ async function solveClicked() {
   setStatus('solverStatus', '⏳ Gemma AI yechmoqda...');
 
   try {
-    const response = await fetch('/api/solve', {
+    const response = await apiFetch('/api/solve', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
       body:    JSON.stringify({ problem, lang: 'kaa' }),
@@ -484,7 +527,7 @@ async function solveClicked() {
             _saveNerCache(problem, nerEntitiesHTML, nerEntitiesKaaHTML);
             history.push(entry);
             renderHistoryList();
-            await fetch('/api/history', {
+            await apiFetch('/api/history', {
               method:  'POST',
               headers: { 'Content-Type': 'application/json' },
               body:    JSON.stringify(entry),
@@ -576,7 +619,7 @@ async function photoSolve() {
   $('photoResultCard').style.display = 'none';
 
   try {
-    const response = await fetch('/api/photo-solve', {
+    const response = await apiFetch('/api/photo-solve', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
       body:    JSON.stringify({
@@ -829,7 +872,7 @@ function kbSelect(id) {
 async function loadAdminPanel() {
   try {
     // Load users
-    const ru = await fetch('/api/admin/users');
+    const ru = await apiFetch('/api/admin/users');
     if (ru.ok) {
       const users = await ru.json();
       const ul = $('adminUsersList');
@@ -851,7 +894,7 @@ async function loadAdminPanel() {
     }
 
     // Load suggestions
-    const rs = await fetch('/api/kb/suggestions');
+    const rs = await apiFetch('/api/kb/suggestions');
     if (rs.ok) {
       const suggestions = await rs.json();
       const sl = $('adminSuggestionsList');
@@ -885,17 +928,17 @@ async function loadAdminPanel() {
 }
 
 async function adminApproveSuggestion(id) {
-  await fetch(`/api/kb/suggestions/${id}/approve`, { method: 'POST' });
+  await apiFetch(`/api/kb/suggestions/${id}/approve`, { method: 'POST' });
   loadAdminPanel();
 }
 
 async function adminRejectSuggestion(id) {
-  await fetch(`/api/kb/suggestions/${id}/reject`, { method: 'POST' });
+  await apiFetch(`/api/kb/suggestions/${id}/reject`, { method: 'POST' });
   loadAdminPanel();
 }
 
 async function adminSetRole(id, role) {
-  await fetch(`/api/admin/users/${id}`, {
+  await apiFetch(`/api/admin/users/${id}`, {
     method:  'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body:    JSON.stringify({ role }),
@@ -905,7 +948,7 @@ async function adminSetRole(id, role) {
 
 async function adminDeleteUser(id) {
   if (!confirm('Удалить пользователя? Это действие нельзя отменить.')) return;
-  await fetch(`/api/admin/users/${id}`, { method: 'DELETE' });
+  await apiFetch(`/api/admin/users/${id}`, { method: 'DELETE' });
   loadAdminPanel();
 }
 
@@ -954,7 +997,7 @@ async function loadTasksTab() {
         counts[topicId] = problems.length;
       }
     } else {
-      const r = await fetch('/api/problems/counts');
+      const r = await apiFetch('/api/problems/counts');
       counts = await r.json();
     }
     _taskCounts   = counts;
@@ -1054,7 +1097,7 @@ async function selectTopic(topicId) {
     if (typeof PROBLEMS_DATA !== 'undefined' && PROBLEMS_DATA[topicId]) {
       problems = PROBLEMS_DATA[topicId];
     } else {
-      const r = await fetch(`/api/problems/${topicId}`);
+      const r = await apiFetch(`/api/problems/${topicId}`);
       problems = await r.json();
     }
     if (!problems.length) return;
@@ -1167,7 +1210,7 @@ async function translatorTranslate() {
   if (status) status.textContent = '⏳ Awdarmaqta...';
   
   try {
-    const response = await fetch('/api/translate', {
+    const response = await apiFetch('/api/translate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -1210,7 +1253,7 @@ function translatorCopy() {
 
 async function translateToKaa(texts) {
   try {
-    const r = await fetch('/api/translate', {
+    const r = await apiFetch('/api/translate', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
       body:    JSON.stringify({ texts, source_lang: 'rus_Cyrl', target_lang: 'kaa_Latn', model: 'tilmoch' }),
